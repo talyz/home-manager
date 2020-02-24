@@ -43,12 +43,15 @@ in
     # overwrite an existing file.
     home.activation.checkLinkTargets = hm.dag.entryBefore ["writeBoundary"] (
       let
+        filesDir = "${config.xdg.dataHome}/home-manager/files";
+
         check = pkgs.writeText "check" ''
           . ${./lib-bash/color-echo.sh}
 
           # A symbolic link whose target path matches this pattern will be
           # considered part of a Home Manager generation.
-          homeFilePattern="$(readlink -e "${builtins.storeDir}")/*-home-manager-files/*"
+          homeFilePatternOld="$(readlink -e "${builtins.storeDir}")/*-home-manager-files/*"
+          homeFilePattern="${filesDir}/*"
 
           newGenFiles="$1"
           shift
@@ -56,6 +59,7 @@ in
             relativePath="''${sourcePath#$newGenFiles/}"
             targetPath="$HOME/$relativePath"
             if [[ -e "$targetPath" \
+                && ! "$(readlink "$targetPath")" == $homeFilePatternOld \
                 && ! "$(readlink "$targetPath")" == $homeFilePattern ]] ; then
               if [[ ! -L "$targetPath" && -n "$HOME_MANAGER_BACKUP_EXT" ]] ; then
                 backup="$targetPath.$HOME_MANAGER_BACKUP_EXT"
@@ -113,6 +117,8 @@ in
     # source and target generation.
     home.activation.linkGeneration = hm.dag.entryAfter ["writeBoundary"] (
       let
+        filesDir = "${config.xdg.dataHome}/home-manager/files";
+
         link = pkgs.writeText "link" ''
           newGenFiles="$1"
           shift
@@ -131,9 +137,10 @@ in
         cleanup = pkgs.writeText "cleanup" ''
           . ${./lib-bash/color-echo.sh}
 
-          # A symbolic link whose target path matches this pattern will be
+          # A symbolic link whose target path matches these patterns will be
           # considered part of a Home Manager generation.
-          homeFilePattern="$(readlink -e "${builtins.storeDir}")/*-home-manager-files/*"
+          homeFilePatternOld="$(readlink -e "${builtins.storeDir}")/*-home-manager-files/*"
+          homeFilePattern="${filesDir}/*"
 
           newGenFiles="$1"
           shift 1
@@ -141,7 +148,8 @@ in
             targetPath="$HOME/$relativePath"
             if [[ -e "$newGenFiles/$relativePath" ]] ; then
               $VERBOSE_ECHO "Checking $targetPath: exists"
-            elif [[ ! "$(readlink "$targetPath")" == $homeFilePattern ]] ; then
+            elif [[ ! "$(readlink "$targetPath")" == $homeFilePatternOld \
+                && ! "$(readlink "$targetPath")" == $homeFilePattern ]] ; then
               warnEcho "Path '$targetPath' not link into Home Manager generation. Skipping delete."
             else
               $VERBOSE_ECHO "Checking $targetPath: gone (deleting)"
@@ -169,9 +177,8 @@ in
           function linkNewGen() {
             echo "Creating home file links in $HOME"
 
-            local newGenFiles
-            newGenFiles="$(readlink -e "$newGenPath/home-files")"
-            find "$newGenFiles" \( -type f -or -type l \) \
+            local newGenFiles="${filesDir}"
+            find "$newGenFiles/" \( -type f -or -type l \) \
               -exec bash ${link} "$newGenFiles" {} +
           }
 
@@ -194,6 +201,13 @@ in
           }
 
           cleanOldGen
+
+          if [[ ! -e "${filesDir}" \
+              || "${config.home-files}" != "$(readlink "${filesDir}")" ]] ; then
+            $DRY_RUN_CMD ln -Tsf $VERBOSE_ARG "${config.home-files}" "${filesDir}"
+          else
+            $VERBOSE_ECHO "No change in static files, skipping linking process"
+          fi
 
           if [[ ! -v oldGenPath || "$oldGenPath" != "$newGenPath" ]] ; then
             echo "Creating profile generation $newGenNum"
