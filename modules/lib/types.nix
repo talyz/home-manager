@@ -1,4 +1,7 @@
-{ lib, dag ? import ./dag.nix { inherit lib; } }:
+{ lib
+, dag ? import ./dag.nix { inherit lib; }
+, gvariant ? import ./gvariant.nix { inherit lib; }
+}:
 
 with lib;
 
@@ -6,9 +9,11 @@ let
 
   typesDag = import ./types-dag.nix { inherit dag lib; };
 
+  gvarLib = gvariant;
+
 in
 
-{
+rec {
 
   inherit (typesDag) dagOf listOrDagOf;
 
@@ -54,6 +59,20 @@ in
         '';
       };
     };
+  };
+
+  gvariant = mkOptionType rec {
+    name = "gvariant";
+    description = "GVariant value";
+    check = v: gvarLib.gvariantOf v != null;
+    merge = loc: defs:
+      let
+        vals = map (d: gvarLib.gvariantOf d.value) defs;
+        listType = types.listOf gvariant;
+      in
+        if all (x: gvarLib.type.isArray x.type && check x) vals
+        then listType.merge loc defs
+        else mergeOneOption loc defs;
   };
 
 }
